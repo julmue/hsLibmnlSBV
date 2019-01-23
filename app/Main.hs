@@ -3,13 +3,20 @@
 {-# LANGUAGE DeriveDataTypeable  #-}
 {-# LANGUAGE DeriveAnyClass      #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE RankNTypes #-}
+-- {-# LANGUAGE FlexibleContexts #-}
 
 module Main where
 
 import Data.SBV
-import Control.Monad.Reader
--- import Data.SBV.Core.Data
+-- import Data.SBV.Tuple
+import qualified Data.SBV.List as SList
+import qualified Data.SBV.List.Bounded as SList
 
+import Control.Monad.Reader
+import Data.List
+import Data.Functor.Identity
+import Data.Bifunctor
 
 main :: IO ()
 main = undefined
@@ -71,7 +78,13 @@ resultAll = allSat dep1
 
 -- car components
 -- should be exhaustive for sat problem
+-- meaning every constructor is a proposition
+-- constructors of one type a mutually exclusive for one feature
+-- example: FuelEngine xor ElectricEngine
 
+-- do type constructors like products and sums work?
+
+-- whats with a hybrid?
 data Engine =
     FuelEngine
   | ElectricEngine
@@ -98,12 +111,12 @@ configuration = do
 
 solution = allSat configuration
 
+-- misc helpers
 is :: (SymWord a) => SBV a -> a -> SBool
 a `is` v = a .== literal v
 
 implies :: (SymWord a1, SymWord a2) => a1 -> a2 -> SBV a1 -> SBV a2 -> SBool
 implies c1 c2 sc1 sc2 = sc1 .== literal c1 ==> sc2 .== literal c2
-
 
 -- -----------------------------------------------------------------------------
 -- Expert System
@@ -112,42 +125,135 @@ implies c1 c2 sc1 sc2 = sc1 .== literal c1 ==> sc2 .== literal c2
 data Service =
     MachineLearning
   | Server
-  deriving (Show, Read, Eq)
-
-data Provider =
-    AWS
-  | StratoCloud
-  | CloudStar
-  deriving (Show, Read, Eq)
+mkSymbolicEnumeration ''Service
 
 data Company =
     Amazon
+  | AWS
   | Strato
+  | StratoCloud
+  | XSystems
+  | BestRun
+  | InfoStar
   | MegaCorp
   | Springer
-  deriving (Show, Read, Eq)
+  | CloudStar
+mkSymbolicEnumeration ''Company
 
 data Country =
     USA
   | Russia
   | China
   | Germany
-  deriving (Show, Read, Eq)
-
-
--- predicates
-isBased :: Company -> Country -> Bool
-isBased = undefined
+  | Sweden
+  | Greece
+  | Spain
+mkSymbolicEnumeration ''Country
 
 -- relationships are expressed with lists of tuples
-ownership :: [(Company, Company)]
-ownership = [
-  (Springer, Strato),
-  (Strato, MegaCorp)
+-- this should be in its own type
+
+-- predicates
+-- getDomiciles :: Company -> [Country]
+-- getDomiciles = getBs . fmap sbvPair $ domicile
+--   where
+--     domicile :: [(Company, Country)]
+--     domicile = [
+--       (AWS, Germany),
+--       (Amazon, USA),
+--       (Amazon, Russia)
+--       ]
+
+-- getDataLocations :: SBV Company -> [SBV Country]
+-- getDataLocations = getBs . fmap sbvPair $ dataLocation
+--   where
+--     dataLocation :: [(Company, Country)]
+--     dataLocation = [
+--         (StratoCloud, Germany)
+--       , (StratoCloud, Spain)
+--       , (StratoCloud, USA)
+--       , (AWS, China)
+--       , (AWS, USA)
+--       , (AWS, Germany)
+--       ]
+
+-- getOwners :: SBV Company -> [SBV Company]
+-- getOwners = getClosure . fmap sbvPair $ ownership
+--   where
+--     ownership :: [(Company, Company)]
+--     ownership = [
+--         (AWS, Amazon)
+--       , (BestRun, XSystems)
+--       , (Springer, MegaCorp)
+--       , (StratoCloud, Strato)
+--       , (CloudStar, BestRun)
+--       ]
+
+service :: [(Company, Service)]
+service = [
+      (AWS, MachineLearning),
+      (AWS, Server)
+      ]
+
+sServices :: [(SBV Company, SBV Service)]
+sServices = fmap sbvPair service
+
+sbvPair :: (SymWord a, SymWord b) => (a, b) -> (SBV a, SBV b)
+sbvPair = bimap literal literal
+
+-- maybe we can get a something like getServicesGen a :: a Company -> [a Company]
+-- the use Identity and SBV as
+-- wrapPair :: (forall a . a -> f a) -> (a , b) -> (f a, f b)
+-- wrapPair f = bimap f f
+--
+-- genGetServices :: Eq (f Company, f Service) => (forall a . a -> f a) -> f Company -> [f Service]
+-- genGetServices f a = getBs (fmap (wrapPair f) service) a
+--   where
+--     service :: [(Company, Service)]
+--     service = [
+--       (AWS, MachineLearning),
+--       (AWS, Server)
+--       ]
+
+-- -----------------------------------------------------------------------------
+
+getClosure :: Eq a => [(a,a)] -> a -> [a]
+getClosure relation a = go relation a []
+  where
+    go [] _ acc = nub acc
+    go ((a1, a2): rels) a acc
+      | a1 == a = getClosure relation a2 ++ go rels a (a2:acc)
+      | otherwise = go rels a acc
+
+-- getBs :: (Eq a, Eq b) => [(a, b)] -> a -> [b]
+-- getBs relation a = fmap snd . filter ((==) a . fst) $ relation
+
+-- getSBs :: (Mergeable a, Mergeable b, EqSymbolic a) => [(a, b)] -> a -> [b]
+-- getSBs relation a = fmap snd . sFilter ((.==) a . fst) $ relation
+--
+-- -- data.sbv.list.bounded
+-- sFilter :: (Mergeable a) => (a -> SBool) -> [a] -> [a]
+-- sFilter f [] = []
+-- sFilter f (x:xs) = ite (f x) (x : sFilter f xs) (sFilter f xs)
+
+-- -----------------------------------------------------------------------------
+
+cDataLocationWL :: [Country]
+cDataLocationWL = [
+    Germany
+  , Spain
   ]
 
-owners :: Company -> [Company]
-owners = closure ownership
+cspServiceML = do
+  (service :: SBV Service) <- free_
+  (company :: SBV Company) <- free_
+  constrain $ service `is` MachineLearning
 
-closure :: [(a,a)] -> a -> [a]
-closure = undefined
+  -- searching like this is necessary cause we have 1:n with fixed company
+  -- does this work without wrapping the literal?
+  constrain $ (company, (literal MachineLearning)) `sElem` sServices
+
+
+
+
+solveCspServiceML = allSat cspServiceML
