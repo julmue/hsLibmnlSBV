@@ -63,18 +63,15 @@ csp = do
 getCspModels = allSat csp
 
 -- use reader monad to get variable bindings
-
-
 -- Symbolic SBool's can be run with sat
--- result = sat dep1
--- resultAll = allSat dep1
+result = sat dep1
+resultAll = allSat dep1
 -- imp1 = useElectricity ==> hasBattery
 
--- this has to be an exhaustive list of boolean features in the sence of True / False
--- car can be completely descibed by this list
--- a variable has to be assigned for every component
 
 -- car components
+-- should be exhaustive for sat problem
+
 data Engine =
     FuelEngine
   | ElectricEngine
