@@ -19,7 +19,7 @@ import Data.Functor.Identity
 import Data.Bifunctor
 
 main :: IO ()
-main = undefined
+main = putStrLn "hello world"
 
 thm1 :: IO ThmResult
 thm1 = prove . forAll ["x"] $ \ (x::SWord8) -> x * 2 .== x + x
@@ -119,6 +119,23 @@ implies :: (SymWord a1, SymWord a2) => a1 -> a2 -> SBV a1 -> SBV a2 -> SBool
 implies c1 c2 sc1 sc2 = sc1 .== literal c1 ==> sc2 .== literal c2
 
 -- -----------------------------------------------------------------------------
+-- symbolic versions of concrete functions
+-- http://hackage.haskell.org/package/sbv-7.12/docs/src/Documentation.SBV.Examples.Puzzles.U2Bridge.html#U2Member
+-- -- | Crossing times for each member of the band
+-- crossTime :: U2Member -> Time
+-- crossTime Bono  = 1
+-- crossTime Edge  = 2
+-- crossTime Adam  = 5
+-- crossTime Larry = 10
+--
+-- -- | The symbolic variant.. The duplication is unfortunate.
+-- sCrossTime :: SU2Member -> STime
+-- sCrossTime m =   ite (m .== bono) (literal (crossTime Bono))
+--                $ ite (m .== edge) (literal (crossTime Edge))
+--                $ ite (m .== adam) (literal (crossTime Adam))
+--                                   (literal (crossTime Larry)) -- Must be Larry
+
+-- -----------------------------------------------------------------------------
 -- Expert System
 -- -----------------------------------------------------------------------------
 -- predicates
@@ -126,6 +143,9 @@ data Service =
     MachineLearning
   | Server
 mkSymbolicEnumeration ''Service
+
+-- | Shorthands for symbolic versions
+[machineLearning, server] = map literal [MachineLearning, Server]
 
 data Company =
     Amazon
@@ -139,6 +159,8 @@ data Company =
   | Springer
   | CloudStar
 mkSymbolicEnumeration ''Company
+
+[aws, strato, stratoCloud ] = map literal [AWS, Strato, StratoCloud]
 
 data Country =
     USA
@@ -189,44 +211,41 @@ mkSymbolicEnumeration ''Country
 --       , (CloudStar, BestRun)
 --       ]
 
-service :: [(Company, Service)]
-service = [
-      (AWS, MachineLearning),
-      (AWS, Server)
-      ]
+hasService :: Company -> Service -> Bool
+hasService = has services
 
-sServices :: [(SBV Company, SBV Service)]
-sServices = fmap sbvPair service
 
-sbvPair :: (SymWord a, SymWord b) => (a, b) -> (SBV a, SBV b)
-sbvPair = bimap literal literal
+-- hasSService :: SBV Company -> [SBV Service]
+-- hasSService c s = ite (m .== aws)  (fromBool (hasService AWS))
+--             $ ite (m .== strato) (fromBool (hasService Strato))
+--                                  (fromBool (hasService StratoCloud))
 
--- maybe we can get a something like getServicesGen a :: a Company -> [a Company]
--- the use Identity and SBV as
--- wrapPair :: (forall a . a -> f a) -> (a , b) -> (f a, f b)
--- wrapPair f = bimap f f
---
--- genGetServices :: Eq (f Company, f Service) => (forall a . a -> f a) -> f Company -> [f Service]
--- genGetServices f a = getBs (fmap (wrapPair f) service) a
---   where
---     service :: [(Company, Service)]
---     service = [
---       (AWS, MachineLearning),
---       (AWS, Server)
---       ]
+has :: (Eq a2, Eq a1) => [(a2, a1)] -> a2 -> a1 -> Bool
+has rel a b = b `elem` bs
+  where
+   bs = getBs rel a
+
+getServices :: Company -> [Service]
+getServices = getBs services
+
+services :: [(Company, Service)]
+services = [
+    (AWS, MachineLearning)
+  , (AWS, Server)
+  ]
+
+sServices = map lift2 services
 
 -- -----------------------------------------------------------------------------
+-- what doesn't work: Lists
 
-getClosure :: Eq a => [(a,a)] -> a -> [a]
-getClosure relation a = go relation a []
-  where
-    go [] _ acc = nub acc
-    go ((a1, a2): rels) a acc
-      | a1 == a = getClosure relation a2 ++ go rels a (a2:acc)
-      | otherwise = go rels a acc
-
--- getBs :: (Eq a, Eq b) => [(a, b)] -> a -> [b]
--- getBs relation a = fmap snd . filter ((==) a . fst) $ relation
+-- this doesn't work with list functions because of merging issues
+-- -> the returning lists have to be structurally identical i.e. same length
+-- getSServices :: SBV Company -> [SBV Service]
+-- getSServices m = ite (m .== aws) (map literal (getServices AWS))
+--                $ ite (m .== strato) (map literal (getServices Strato))
+--                                     (map literal (getServices StratoCloud)) -- must be stratoCloud
+-- "select" is a generalization of ite
 
 -- getSBs :: (Mergeable a, Mergeable b, EqSymbolic a) => [(a, b)] -> a -> [b]
 -- getSBs relation a = fmap snd . sFilter ((.==) a . fst) $ relation
@@ -235,6 +254,30 @@ getClosure relation a = go relation a []
 -- sFilter :: (Mergeable a) => (a -> SBool) -> [a] -> [a]
 -- sFilter f [] = []
 -- sFilter f (x:xs) = ite (f x) (x : sFilter f xs) (sFilter f xs)
+-- -----------------------------------------------------------------------------
+
+lift2 :: (SymWord a, SymWord b) => (a, b) -> (SBV a, SBV b)
+lift2 (a, b) = (literal a, literal b)
+
+lift3 :: (SymWord a, SymWord b, SymWord c) => (a, b, c) -> (SBV a, SBV b, SBV c)
+lift3 (a, b, c) = (literal a, literal b, literal c)
+
+lift4 :: (SymWord a, SymWord b, SymWord c, SymWord d) => (a, b, c, d) -> (SBV a, SBV b, SBV c, SBV d)
+lift4 (a, b, c, d) = (literal a, literal b, literal c, literal d)
+
+-- -----------------------------------------------------------------------------
+
+-- defined below
+-- getClosure :: Eq a => [(a,a)] -> a -> [a]
+-- getClosure relation a = go relation a []
+--   where
+--     go [] _ acc = nub acc
+--     go ((a1, a2): rels) a acc
+--       | a1 == a = getClosure relation a2 ++ go rels a (a2:acc)
+--       | otherwise = go rels a acc
+
+getBs :: (Eq a, Eq b) => [(a, b)] -> a -> [b]
+getBs relation a = fmap snd . filter ((==) a . fst) $ relation
 
 -- -----------------------------------------------------------------------------
 
@@ -244,16 +287,56 @@ cDataLocationWL = [
   , Spain
   ]
 
+cspServiceML :: Symbolic ()
 cspServiceML = do
   (service :: SBV Service) <- free_
   (company :: SBV Company) <- free_
   constrain $ service `is` MachineLearning
-
-  -- searching like this is necessary cause we have 1:n with fixed company
-  -- does this work without wrapping the literal?
-  constrain $ (company, (literal MachineLearning)) `sElem` sServices
-
-
-
+  constrain $ (company, service) `sElem` sServices
 
 solveCspServiceML = allSat cspServiceML
+
+
+-- -----------------------------------------------------------------------------
+-- minimal example ::
+
+data Person
+  = Mary
+  | Richard
+  | Claudia
+  | Christian
+  | Stephen
+
+mkSymbolicEnumeration ''Person
+
+[mary, richard, claudia, christian, stephen] =
+  map literal [Mary, Richard, Claudia, Christian, Stephen]
+
+childOf :: [(Person, Person)]
+childOf = [
+    (Mary, Richard) ,
+    (Richard, Christian),
+    (Christian, Stephen)]
+
+getAncestors :: Person -> [Person]
+getAncestors p = go childOf p []
+  where
+    go [] _ acc = nub acc
+    go ((p1, p2): rels) a acc
+      | p1 == p = go rels p (p2:acc) ++ getAncestors p2
+      | otherwise = go rels a acc
+
+-- symbolic version of getAncestors
+getSAncestors :: SBV Person -> [SBV Person]
+getSAncestors p = ite (p .== mary) (map literal (getAncestors Mary))
+                $ ite (p .== richard) (map literal (getAncestors Richard))
+                $ ite (p .== claudia) (map literal (getAncestors Claudia))
+                $ ite (p .== christian) (map literal (getAncestors Christian))
+                                        (map literal (getAncestors Stephen))
+
+cspAncestors :: IO AllSatResult
+cspAncestors = allSat $ do
+  (person :: SBV Person) <- free_
+  constrain $ bnot $ stephen `sElem` (getSAncestors person)
+
+-- hm ...
